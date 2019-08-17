@@ -1,4 +1,3 @@
-
 /**
  * @license
  * Copyright (c) 2017 The Polymer Project Authors. All rights reserved.
@@ -13,88 +12,221 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
+/**
+ * IMPORTANT: For compatibility with tsickle and the Closure JS compiler, all
+ * property decorators (but not class decorators) in this file must:
+ *
+ * 1) Have an @ExportDecoratedItems annotation in its JSDoc.
+ * 2) Be defined as a regular function, not an arrow function.
+ */
+
 import {LitElement} from '../lit-element.js';
 
 import {PropertyDeclaration, UpdatingElement} from './updating-element.js';
 
 export type Constructor<T> = {
-  new (...args: any[]): T
+  new (...args: unknown[]): T
 };
+
+// From the TC39 Decorators proposal
+interface ClassDescriptor {
+  kind: 'class';
+  elements: ClassElement[];
+  finisher?: <T>(clazz: Constructor<T>) => undefined | Constructor<T>;
+}
+
+// From the TC39 Decorators proposal
+interface ClassElement {
+  kind: 'field'|'method';
+  key: PropertyKey;
+  placement: 'static'|'prototype'|'own';
+  initializer?: Function;
+  extras?: ClassElement[];
+  finisher?: <T>(clazz: Constructor<T>) => undefined | Constructor<T>;
+  descriptor?: PropertyDescriptor;
+}
+
+const legacyCustomElement =
+    (tagName: string, clazz: Constructor<HTMLElement>) => {
+      window.customElements.define(tagName, clazz);
+      // Cast as any because TS doesn't recognize the return type as being a
+      // subtype of the decorated class when clazz is typed as
+      // `Constructor<HTMLElement>` for some reason.
+      // `Constructor<HTMLElement>` is helpful to make sure the decorator is
+      // applied to elements however.
+      // tslint:disable-next-line:no-any
+      return clazz as any;
+    };
+
+const standardCustomElement =
+    (tagName: string, descriptor: ClassDescriptor) => {
+      const {kind, elements} = descriptor;
+      return {
+        kind,
+        elements,
+        // This callback is called once the class is otherwise fully defined
+        finisher(clazz: Constructor<HTMLElement>) {
+          window.customElements.define(tagName, clazz);
+        }
+      };
+    };
 
 /**
  * Class decorator factory that defines the decorated class as a custom element.
  *
  * @param tagName the name of the custom element to define
- *
- * In TypeScript, the `tagName` passed to `customElement` must be a key of the
- * `HTMLElementTagNameMap` interface. To add your element to the interface,
- * declare the interface in this module:
- *
- *     @customElement('my-element')
- *     export class MyElement extends LitElement {}
- *
- *     declare global {
- *       interface HTMLElementTagNameMap {
- *         'my-element': MyElement;
- *       }
- *     }
- *
  */
-export const customElement = (tagName: keyof HTMLElementTagNameMap) =>
-    (clazz: Constructor<HTMLElement>) => {
-      window.customElements.define(tagName, clazz);
-      // Cast as any because TS doesn't recognize the return type as being a
-      // subtype of the decorated class when clazz is typed as
-      // `Constructor<HTMLElement>` for some reason. `Constructor<HTMLElement>`
-      // is helpful to make sure the decorator is applied to elements however.
-      return clazz as any;
+export const customElement = (tagName: string) =>
+    (classOrDescriptor: Constructor<HTMLElement>|ClassDescriptor) =>
+        (typeof classOrDescriptor === 'function') ?
+    legacyCustomElement(tagName, classOrDescriptor) :
+    standardCustomElement(tagName, classOrDescriptor);
+
+const standardProperty =
+    (options: PropertyDeclaration, element: ClassElement) => {
+      // When decorating an accessor, pass it through and add property metadata.
+      // Note, the `hasOwnProperty` check in `createProperty` ensures we don't
+      // stomp over the user's accessor.
+      if (element.kind === 'method' && element.descriptor &&
+          !('value' in element.descriptor)) {
+        return {
+          ...element,
+          finisher(clazz: typeof UpdatingElement) {
+            clazz.createProperty(element.key, options);
+          }
+        };
+      } else {
+        // createProperty() takes care of defining the property, but we still
+        // must return some kind of descriptor, so return a descriptor for an
+        // unused prototype field. The finisher calls createProperty().
+        return {
+          kind: 'field',
+          key: Symbol(),
+          placement: 'own',
+          descriptor: {},
+          // When @babel/plugin-proposal-decorators implements initializers,
+          // do this instead of the initializer below. See:
+          // https://github.com/babel/babel/issues/9260 extras: [
+          //   {
+          //     kind: 'initializer',
+          //     placement: 'own',
+          //     initializer: descriptor.initializer,
+          //   }
+          // ],
+          initializer(this: {[key: string]: unknown}) {
+            if (typeof element.initializer === 'function') {
+              this[element.key as string] = element.initializer.call(this);
+            }
+          },
+          finisher(clazz: typeof UpdatingElement) {
+            clazz.createProperty(element.key, options);
+          }
+        };
+      }
+    };
+
+const legacyProperty =
+    (options: PropertyDeclaration, proto: Object, name: PropertyKey) => {
+      (proto.constructor as typeof UpdatingElement)
+          .createProperty(name, options);
     };
 
 /**
  * A property decorator which creates a LitElement property which reflects a
  * corresponding attribute value. A `PropertyDeclaration` may optionally be
  * supplied to configure property features.
+ *
+ * @ExportDecoratedItems
  */
-export const property = (options?: PropertyDeclaration) => (proto: Object,
-                                                            name: string) => {
-  (proto.constructor as typeof UpdatingElement).createProperty(name, options);
-};
+export function property(options?: PropertyDeclaration) {
+  // tslint:disable-next-line:no-any decorator
+  return (protoOrDescriptor: Object|ClassElement, name?: PropertyKey): any =>
+             (name !== undefined) ?
+      legacyProperty(options!, protoOrDescriptor as Object, name) :
+      standardProperty(options!, protoOrDescriptor as ClassElement);
+}
 
 /**
  * A property decorator that converts a class property into a getter that
  * executes a querySelector on the element's renderRoot.
+ *
+ * @ExportDecoratedItems
  */
-export const query = _query((target: NodeSelector, selector: string) =>
-                                target.querySelector(selector));
+export function query(selector: string) {
+  return (protoOrDescriptor: Object|ClassElement,
+          // tslint:disable-next-line:no-any decorator
+          name?: PropertyKey): any => {
+    const descriptor = {
+      get(this: LitElement) {
+        return this.renderRoot.querySelector(selector);
+      },
+      enumerable: true,
+      configurable: true,
+    };
+    return (name !== undefined) ?
+        legacyQuery(descriptor, protoOrDescriptor as Object, name) :
+        standardQuery(descriptor, protoOrDescriptor as ClassElement);
+  };
+}
 
 /**
  * A property decorator that converts a class property into a getter
  * that executes a querySelectorAll on the element's renderRoot.
- */
-export const queryAll = _query((target: NodeSelector, selector: string) =>
-                                   target.querySelectorAll(selector));
-
-/**
- * Base-implementation of `@query` and `@queryAll` decorators.
  *
- * @param queryFn exectute a `selector` (ie, querySelector or querySelectorAll)
- * against `target`.
+ * @ExportDecoratedItems
  */
-function _query<T>(queryFn: (target: NodeSelector, selector: string) => T) {
-  return (selector: string) => (proto: any, propName: string) => {
-    Object.defineProperty(proto, propName, {
-      get(this: LitElement) { return queryFn(this.renderRoot!, selector); },
-      enumerable : true,
-      configurable : true,
-    });
+export function queryAll(selector: string) {
+  return (protoOrDescriptor: Object|ClassElement,
+          // tslint:disable-next-line:no-any decorator
+          name?: PropertyKey): any => {
+    const descriptor = {
+      get(this: LitElement) {
+        return this.renderRoot.querySelectorAll(selector);
+      },
+      enumerable: true,
+      configurable: true,
+    };
+    return (name !== undefined) ?
+        legacyQuery(descriptor, protoOrDescriptor as Object, name) :
+        standardQuery(descriptor, protoOrDescriptor as ClassElement);
   };
 }
+
+const legacyQuery =
+    (descriptor: PropertyDescriptor, proto: Object, name: PropertyKey) => {
+      Object.defineProperty(proto, name, descriptor);
+    };
+
+const standardQuery = (descriptor: PropertyDescriptor, element: ClassElement) =>
+    ({
+      kind: 'method',
+      placement: 'prototype',
+      key: element.key,
+      descriptor,
+    });
+
+const standardEventOptions =
+    (options: AddEventListenerOptions, element: ClassElement) => {
+      return {
+        ...element,
+        finisher(clazz: typeof UpdatingElement) {
+          Object.assign(
+              clazz.prototype[element.key as keyof UpdatingElement], options);
+        }
+      };
+    };
+
+const legacyEventOptions =
+    // tslint:disable-next-line:no-any legacy decorator
+    (options: AddEventListenerOptions, proto: any, name: PropertyKey) => {
+      Object.assign(proto[name], options);
+    };
 
 /**
  * Adds event listener options to a method used as an event listener in a
  * lit-html template.
  *
- * @param options An object that specifis event listener options as accepted by
+ * @param options An object that specifies event listener options as accepted by
  * `EventTarget#addEventListener` and `EventTarget#removeEventListener`.
  *
  * Current browsers support the `capture`, `passive`, and `once` options. See:
@@ -115,9 +247,19 @@ function _query<T>(queryFn: (target: NodeSelector, selector: string) => T) {
  *         this.clicked = true;
  *       }
  *     }
+ *
+ * @ExportDecoratedItems
  */
-export const eventOptions = (options: EventListenerOptions) =>
-    (proto: any, name: string) => {
-      // This comment is here to fix a disagreement between formatter and linter
-      Object.assign(proto[name], options);
-    };
+export function eventOptions(options: AddEventListenerOptions) {
+  // Return value typed as any to prevent TypeScript from complaining that
+  // standard decorator function signature does not match TypeScript decorator
+  // signature
+  // TODO(kschaaf): unclear why it was only failing on this decorator and not
+  // the others
+  return ((protoOrDescriptor: Object|ClassElement, name?: string) =>
+           (name !== undefined) ?
+               legacyEventOptions(options, protoOrDescriptor as Object, name) :
+               standardEventOptions(options, protoOrDescriptor as ClassElement)) as
+             // tslint:disable-next-line:no-any decorator
+             any;
+}

@@ -10,15 +10,28 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
   <title>lit-element tests</title>
-  <script src="../node_modules/web-component-tester/browser.js"></script>
+  <script src="../node_modules/mocha/mocha.js"></script>
+  <script src="../node_modules/wct-mocha/wct-mocha.js"></script>
 </head>
 <body>
   <script>
+      // Currently Babel decorator compilation does not work on some older
+      // browsers due to use of some newish features; detect these and don't
+      // run babel-compiled tests on those browsers
+      const fnNameDesc = Object.getOwnPropertyDescriptor(function() {}, 'name');
+      const testBabel = fnNameDesc && fnNameDesc.configurable && Array.prototype.find;
       WCT.loadSuites([
         'runner.html',
         'runner.html?wc-shadydom=true',
         'runner.html?wc-shadydom=true&wc-ce=true',
         'runner.html?wc-shadydom=true&wc-ce=true&wc-shimcssproperties=true'
-      ]);
+      ].concat(
+        // Don't run Babel tests on 
+        testBabel ? [
+        'runner-babel.html',
+        'runner-babel.html?wc-shadydom=true',
+        'runner-babel.html?wc-shadydom=true&wc-ce=true',
+        'runner-babel.html?wc-shadydom=true&wc-ce=true&wc-shimcssproperties=true'
+      ]: []));
     </script>
 </body></html>

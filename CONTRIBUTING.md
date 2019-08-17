@@ -10,7 +10,6 @@ Beyond GitHub, we try to have a variety of different lines of communication open
 
 * [Blog](https://blog.polymer-project.org/)
 * [Twitter](https://twitter.com/polymer)
-* [Google+ Community](https://plus.sandbox.google.com/u/0/communities/115626364525706131031?cfem=1)
 * [Mailing list](https://groups.google.com/forum/#!forum/polymer-dev)
 * [Slack channel](https://bit.ly/polymerslack)
 
@@ -33,6 +32,10 @@ If you've already signed a CLA but are still getting bothered by the awfully ins
 [Complete the CLA](https://cla.developers.google.com/clas)
 
 ## Contributing
+
+### Contributing documentation
+
+Docs source is in the `docs` folder. To build the site yourself, see the instructions in [docs/README.md](docs/README.md).
 
 ### Filing bugs
 

@@ -1,0 +1,33 @@
+title: LitElement Documentation
+toc:
+  introduction: 
+    title: Introduction
+    url: /guide
+  getting started: 
+    title: Getting Started
+    url: /guide/start
+  templates: 
+    title: Templates
+    url: /guide/templates
+  styles:
+    title: Styles
+    desc: Style your elements with CSS.
+    url: /guide/styles
+  properties: 
+    title: Properties
+    url: /guide/properties
+  events:
+    title: Events
+    url: /guide/events
+  lifecycle: 
+    title: Lifecycle
+    url: /guide/lifecycle
+  publish: 
+    title: Publish a component
+    url: /guide/publish
+  use: 
+    title: Use a component
+    url: /guide/use
+  community:
+    title: Community
+    url: /guide/community

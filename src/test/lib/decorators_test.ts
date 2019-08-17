@@ -12,15 +12,55 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-import {eventOptions} from '../../lib/decorators.js';
-import {
-  customElement,
-  html,
-  LitElement,
-  query,
-  queryAll
-} from '../../lit-element.js';
+import {eventOptions, property} from '../../lib/decorators.js';
+import {customElement, html, LitElement, PropertyValues, query, queryAll} from '../../lit-element.js';
 import {generateElementName} from '../test-helpers.js';
+
+// tslint:disable:no-any ok in tests
+
+let hasOptions;
+const supportsOptions = (function() {
+  if (hasOptions !== undefined) {
+    return hasOptions;
+  }
+  const fn = () => {};
+  const event = 'foo';
+  hasOptions = false;
+  const options = {
+    get capture() {
+      hasOptions = true;
+      return true;
+    }
+  };
+  document.body.addEventListener(event, fn, options);
+  document.body.removeEventListener(event, fn, options);
+  return hasOptions;
+})();
+
+let hasPassive;
+const supportsPassive = (function() {
+  if (hasPassive !== undefined) {
+    return hasPassive;
+  }
+  // Use an iframe since ShadyDOM will pass this test but doesn't actually
+  // enforce passive behavior.
+  const f = document.createElement('iframe');
+  document.body.appendChild(f);
+  const fn = () => {};
+  const event = 'foo';
+  hasPassive = false;
+  const options = {
+    get passive() {
+      hasPassive = true;
+      return true;
+    }
+  };
+  f.contentDocument!.addEventListener(event, fn, options);
+  f.contentDocument!.removeEventListener(
+      event, fn, options as AddEventListenerOptions);
+  document.body.removeChild(f);
+  return hasPassive;
+})();
 
 const assert = chai.assert;
 
@@ -51,10 +91,238 @@ suite('decorators', () => {
     });
   });
 
+  suite('@property', () => {
+    test('property options via decorator', async () => {
+      const hasChanged = (value: any, old: any) =>
+          old === undefined || value > old;
+      const fromAttribute = (value: any) => parseInt(value);
+      const toAttribute = (value: any) => `${value}-attr`;
+      class E extends LitElement {
+        @property({attribute: false}) noAttr = 'noAttr';
+        @property({attribute: true}) atTr = 'attr';
+        @property({attribute: 'custom', reflect: true})
+        customAttr = 'customAttr';
+        @property({hasChanged}) hasChanged = 10;
+        @property({converter: fromAttribute}) fromAttribute = 1;
+        @property({reflect: true, converter: {toAttribute}}) toAttribute = 1;
+        @property({
+          attribute: 'all-attr',
+          hasChanged,
+          converter: {fromAttribute, toAttribute},
+          reflect: true
+        })
+        all = 10;
+
+        updateCount = 0;
+
+        update(changed: PropertyValues) {
+          this.updateCount++;
+          super.update(changed);
+        }
+
+        render() {
+          return html``;
+        }
+      }
+      customElements.define(generateElementName(), E);
+      const el = new E();
+      container.appendChild(el);
+      await el.updateComplete;
+      assert.equal(el.updateCount, 1);
+      assert.equal(el.noAttr, 'noAttr');
+      assert.equal(el.atTr, 'attr');
+      assert.equal(el.customAttr, 'customAttr');
+      assert.equal(el.hasChanged, 10);
+      assert.equal(el.fromAttribute, 1);
+      assert.equal(el.toAttribute, 1);
+      assert.equal(el.getAttribute('toattribute'), '1-attr');
+      assert.equal(el.all, 10);
+      assert.equal(el.getAttribute('all-attr'), '10-attr');
+      el.setAttribute('noattr', 'noAttr2');
+      el.setAttribute('attr', 'attr2');
+      el.setAttribute('custom', 'customAttr2');
+      el.setAttribute('fromattribute', '2attr');
+      el.toAttribute = 2;
+      el.all = 5;
+      await el.updateComplete;
+      assert.equal(el.updateCount, 2);
+      assert.equal(el.noAttr, 'noAttr');
+      assert.equal(el.atTr, 'attr2');
+      assert.equal(el.customAttr, 'customAttr2');
+      assert.equal(el.fromAttribute, 2);
+      assert.equal(el.toAttribute, 2);
+      assert.equal(el.getAttribute('toattribute'), '2-attr');
+      assert.equal(el.all, 5);
+      el.all = 15;
+      await el.updateComplete;
+      assert.equal(el.updateCount, 3);
+      assert.equal(el.all, 15);
+      assert.equal(el.getAttribute('all-attr'), '15-attr');
+      el.setAttribute('all-attr', '16-attr');
+      await el.updateComplete;
+      assert.equal(el.updateCount, 4);
+      assert.equal(el.getAttribute('all-attr'), '16-attr');
+      assert.equal(el.all, 16);
+      el.hasChanged = 5;
+      await el.updateComplete;
+      assert.equal(el.hasChanged, 5);
+      assert.equal(el.updateCount, 4);
+      el.hasChanged = 15;
+      await el.updateComplete;
+      assert.equal(el.hasChanged, 15);
+      assert.equal(el.updateCount, 5);
+      el.setAttribute('all-attr', '5-attr');
+      await el.updateComplete;
+      assert.equal(el.all, 5);
+      assert.equal(el.updateCount, 5);
+      el.all = 15;
+      await el.updateComplete;
+      assert.equal(el.all, 15);
+      assert.equal(el.updateCount, 6);
+    });
+
+    test('can decorate user accessor with @property', async () => {
+      class E extends LitElement {
+        _foo?: number;
+        updatedContent?: number;
+
+        @property({reflect: true, type: Number})
+        get foo() {
+          return this._foo as number;
+        }
+
+        set foo(v: number) {
+          const old = this.foo;
+          this._foo = v;
+          this.requestUpdate('foo', old);
+        }
+
+        updated() {
+          this.updatedContent = this.foo;
+        }
+      }
+      customElements.define(generateElementName(), E);
+      const el = new E();
+      container.appendChild(el);
+      await el.updateComplete;
+      assert.equal(el._foo, undefined);
+      assert.equal(el.updatedContent, undefined);
+      assert.isFalse(el.hasAttribute('foo'));
+      el.foo = 5;
+      await el.updateComplete;
+      assert.equal(el._foo, 5);
+      assert.equal(el.updatedContent, 5);
+      assert.equal(el.getAttribute('foo'), '5');
+    });
+
+    test('can mix property options via decorator and via getter', async () => {
+      const hasChanged = (value: any, old: any) =>
+          old === undefined || value > old;
+      const fromAttribute = (value: any) => parseInt(value);
+      const toAttribute = (value: any) => `${value}-attr`;
+      class E extends LitElement {
+        @property({hasChanged}) hasChanged = 10;
+        @property({converter: fromAttribute}) fromAttribute = 1;
+        @property({reflect: true, converter: {toAttribute}}) toAttribute = 1;
+        @property({
+          attribute: 'all-attr',
+          hasChanged,
+          converter: {fromAttribute, toAttribute},
+          reflect: true
+        })
+        all = 10;
+
+        updateCount = 0;
+
+        static get properties() {
+          return {
+            noAttr: {attribute: false},
+            atTr: {attribute: true},
+            customAttr: {attribute: 'custom', reflect: true},
+          };
+        }
+
+        noAttr: string|undefined;
+        atTr: string|undefined;
+        customAttr: string|undefined;
+
+        constructor() {
+          super();
+          this.noAttr = 'noAttr';
+          this.atTr = 'attr';
+          this.customAttr = 'customAttr';
+        }
+
+        update(changed: PropertyValues) {
+          this.updateCount++;
+          super.update(changed);
+        }
+
+        render() {
+          return html``;
+        }
+      }
+      customElements.define(generateElementName(), E);
+      const el = new E();
+      container.appendChild(el);
+      await el.updateComplete;
+      assert.equal(el.updateCount, 1);
+      assert.equal(el.noAttr, 'noAttr');
+      assert.equal(el.atTr, 'attr');
+      assert.equal(el.customAttr, 'customAttr');
+      assert.equal(el.hasChanged, 10);
+      assert.equal(el.fromAttribute, 1);
+      assert.equal(el.toAttribute, 1);
+      assert.equal(el.getAttribute('toattribute'), '1-attr');
+      assert.equal(el.all, 10);
+      assert.equal(el.getAttribute('all-attr'), '10-attr');
+      el.setAttribute('noattr', 'noAttr2');
+      el.setAttribute('attr', 'attr2');
+      el.setAttribute('custom', 'customAttr2');
+      el.setAttribute('fromattribute', '2attr');
+      el.toAttribute = 2;
+      el.all = 5;
+      await el.updateComplete;
+      assert.equal(el.updateCount, 2);
+      assert.equal(el.noAttr, 'noAttr');
+      assert.equal(el.atTr, 'attr2');
+      assert.equal(el.customAttr, 'customAttr2');
+      assert.equal(el.fromAttribute, 2);
+      assert.equal(el.toAttribute, 2);
+      assert.equal(el.getAttribute('toattribute'), '2-attr');
+      assert.equal(el.all, 5);
+      el.all = 15;
+      await el.updateComplete;
+      assert.equal(el.updateCount, 3);
+      assert.equal(el.all, 15);
+      assert.equal(el.getAttribute('all-attr'), '15-attr');
+      el.setAttribute('all-attr', '16-attr');
+      await el.updateComplete;
+      assert.equal(el.updateCount, 4);
+      assert.equal(el.getAttribute('all-attr'), '16-attr');
+      assert.equal(el.all, 16);
+      el.hasChanged = 5;
+      await el.updateComplete;
+      assert.equal(el.hasChanged, 5);
+      assert.equal(el.updateCount, 4);
+      el.hasChanged = 15;
+      await el.updateComplete;
+      assert.equal(el.hasChanged, 15);
+      assert.equal(el.updateCount, 5);
+      el.setAttribute('all-attr', '5-attr');
+      await el.updateComplete;
+      assert.equal(el.all, 5);
+      assert.equal(el.updateCount, 5);
+      el.all = 15;
+      await el.updateComplete;
+      assert.equal(el.all, 15);
+      assert.equal(el.updateCount, 6);
+    });
+  });
+
   suite('@query', () => {
     @customElement(generateElementName() as keyof HTMLElementTagNameMap)
     class C extends LitElement {
-
       @query('#blah') blah?: HTMLDivElement;
 
       @query('span') nope?: HTMLSpanElement;
@@ -88,7 +356,6 @@ suite('decorators', () => {
   suite('@queryAll', () => {
     @customElement(generateElementName() as keyof HTMLElementTagNameMap)
     class C extends LitElement {
-
       @queryAll('div') divs!: NodeList;
 
       @queryAll('span') spans!: NodeList;
@@ -105,7 +372,7 @@ suite('decorators', () => {
       const c = new C();
       container.appendChild(c);
       await c.updateComplete;
-      const divs = c.divs!;
+      const divs = c.divs;
       // This is not true in ShadyDOM:
       // assert.instanceOf(divs, NodeList);
       assert.lengthOf(divs, 2);
@@ -123,7 +390,10 @@ suite('decorators', () => {
   });
 
   suite('@eventOptions', () => {
-    test('allows capturing listeners', async () => {
+    test('allows capturing listeners', async function() {
+      if (!supportsOptions) {
+        this.skip();
+      }
       @customElement(generateElementName() as keyof HTMLElementTagNameMap)
       class C extends LitElement {
         eventPhase?: number;
@@ -134,7 +404,7 @@ suite('decorators', () => {
           `;
         }
 
-        @eventOptions({capture : true})
+        @eventOptions({capture: true})
         onClick(e: Event) {
           this.eventPhase = e.eventPhase;
         }
@@ -146,6 +416,68 @@ suite('decorators', () => {
       const button = c.shadowRoot!.querySelector('button')!;
       button.click();
       assert.equal(c.eventPhase, Event.CAPTURING_PHASE);
+    });
+
+    test('allows once listeners', async function() {
+      if (!supportsOptions) {
+        this.skip();
+      }
+      @customElement(generateElementName() as keyof HTMLElementTagNameMap)
+      class C extends LitElement {
+        clicked = 0;
+
+        render() {
+          return html`
+            <div @click=${this.onClick}><button></button></div>
+          `;
+        }
+
+        @eventOptions({once: true})
+        onClick() {
+          this.clicked++;
+        }
+      }
+
+      const c = new C();
+      container.appendChild(c);
+      await c.updateComplete;
+      const button = c.shadowRoot!.querySelector('button')!;
+      button.click();
+      button.click();
+      assert.equal(c.clicked, 1);
+    });
+
+    test('allows passive listeners', async function() {
+      if (!supportsPassive) {
+        this.skip();
+      }
+      @customElement(generateElementName() as keyof HTMLElementTagNameMap)
+      class C extends LitElement {
+        defaultPrevented?: boolean;
+
+        render() {
+          return html`
+            <div @click=${this.onClick}><button></button></div>
+          `;
+        }
+
+        @eventOptions({passive: true})
+        onClick(e: Event) {
+          try {
+            e.preventDefault();
+          } catch (error) {
+            // no need to do anything
+          }
+          this.defaultPrevented = e.defaultPrevented;
+        }
+      }
+
+      const c = new C();
+      container.appendChild(c);
+      await c.updateComplete;
+      const button = c.shadowRoot!.querySelector('button')!;
+      button.click();
+      assert.isFalse(c.defaultPrevented);
     });
   });
 });
